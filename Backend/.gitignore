@@ -1,0 +1,68 @@
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+python3/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Dependencies
+site-packages/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ruff and mypy
+.ruff_cache/
+.mypy_cache/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite3
+mysql/
+postgres_data/
+pgdata/
+
+# Alembic
+# Keep migration scripts tracked
+# alembic/versions/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+tmp/
+temp/
+
+# Secrets and certificates
+*.pem
+*.key
+secrets/
