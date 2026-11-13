@@ -1,29 +1,66 @@
 import enum
+import uuid
+from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Enum, Integer, String
-from sqlalchemy.sql import func
+from sqlalchemy import Boolean, DateTime, String, func, text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
-from app.config.db import Base
+from app.core.db import Base
 
 
 class UserRole(str, enum.Enum):
-    User = "Member"
-    Staff = "staff"
+    ADMIN = "ADMIN"
+    STAFF = "STAFF"
+    MEMBER = "MEMBER"
+    User = "MEMBER"
+    Staff = "STAFF"
+    Admin = "ADMIN"
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
 
-    full_name = Column(String(100), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    email = Column(String(255), unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(
+        String(150), unique=True, index=True, nullable=False
+    )
 
-    password_hash = Column(String(255), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    role = Column(Enum(UserRole), nullable=False)
+    role: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="MEMBER",
+        server_default=text("'MEMBER'"),
+    )
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
 
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.now,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.now,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

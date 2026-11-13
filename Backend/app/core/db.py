@@ -1,31 +1,35 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
-from  config import DATABASE_URL
-from sqlalchemy import text
 
-Engine  = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=Engine)
+from app.core.config import DATABASE_URL
+
 Base = declarative_base()
 
+
+Engine = create_engine(DATABASE_URL) if DATABASE_URL else None
+SessionLocal = (
+    sessionmaker(autocommit=False, autoflush=False, bind=Engine)
+    if Engine is not None
+    else None
+)
+
+
 def get_db():
+    if SessionLocal is None:
+        raise RuntimeError("DATABASE_URL must be configured before using the database")
+
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-# Import your engine from the file where you defined it
-# (Assuming it's in a file named database.py)
 
 def check_connection():
-    try:
-        # Connect to the database and run a simple test query
-        with Engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-        print("✅ Database connection successful!")
-    except Exception as e:
-        print("❌ Database connection failed!")
-        print(f"Error details: {e}")
+    if Engine is None:
+        raise RuntimeError(
+            "DATABASE_URL must be configured before checking the database"
+        )
 
-if __name__ == "__main__":
-    check_connection()
+    with Engine.connect() as connection:
+        connection.execute(text("SELECT 1"))

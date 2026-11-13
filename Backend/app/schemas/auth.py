@@ -1,3 +1,6 @@
+from typing import Union
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, EmailStr
 
 
@@ -12,7 +15,7 @@ class Token(BaseModel):
 
 
 class UserPublic(BaseModel):
-    id: int
+    id: Union[UUID, int, str]
     full_name: str
     email: EmailStr
     role: str

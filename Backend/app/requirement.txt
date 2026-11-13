@@ -1,0 +1,17 @@
+fastapi[standard]
+sqlalchemy
+psycopg[binary]
+alembic
+pydantic
+pydantic-settings
+python-dotenv
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt<5
+python-multipart
+email-validator
+pytest
+pytest-asyncio
+httpx
+ruff
+mypy
