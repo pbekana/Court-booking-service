@@ -3,15 +3,13 @@ from datetime import date, datetime, time
 
 from sqlalchemy import Date, DateTime, SmallInteger, String, Time, func, text
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.db import Base
 
 
-class Base(DeclarativeBase):
-    pass
-
-
-class RecurringSchedule(Base):
-    __tablename__ = "recurring_schedules"  # Replace with your exact table name
+class RecurringSeries(Base):
+    __tablename__ = "recurring_series"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -24,24 +22,20 @@ class RecurringSchedule(Base):
     court_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False
     )
-    day_of_week: Mapped[int] = mapped_column(
-        SmallInteger, nullable=False
-    )
+    day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     start_time: Mapped[time] = mapped_column(
         Time(timezone=False), nullable=False
     )
-    end_time: Mapped[time] = mapped_column(
-        Time(timezone=False), nullable=False
-    )
-    recurrence_start_date: Mapped[date] = mapped_column(
-        Date, nullable=False
-    )
-    recurrence_end_date: Mapped[date] = mapped_column(
-        Date, nullable=False
-    )
+    end_time: Mapped[time] = mapped_column(Time(timezone=False), nullable=False)
+    recurrence_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    recurrence_end_date: Mapped[date] = mapped_column(Date, nullable=False)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=text("'ACTIVE'")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+# Backwards compatibility alias
+RecurringSchedule = RecurringSeries

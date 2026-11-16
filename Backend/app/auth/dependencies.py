@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Callable
-from typing import Annotated, Union
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -60,7 +60,7 @@ def get_current_user(
         try:
             val = uuid.UUID(user_id)
             user = db.query(User).filter(User.id == val).first()
-        except Exception:
+        except (ValueError, TypeError):
             user = db.query(User).filter(User.id == user_id).first()
 
     if user is None:
@@ -69,7 +69,7 @@ def get_current_user(
     return user
 
 
-def require_role(required_role: Union[UserRole, str]) -> Callable[..., User]:
+def require_role(required_role: UserRole | str) -> Callable[..., User]:
     def role_checker(
         current_user: Annotated[User, Depends(get_current_user)],
     ) -> User:
@@ -93,7 +93,7 @@ def require_role(required_role: Union[UserRole, str]) -> Callable[..., User]:
     return role_checker
 
 
-def require_roles(*allowed_roles: Union[UserRole, str]) -> Callable[..., User]:
+def require_roles(*allowed_roles: UserRole | str) -> Callable[..., User]:
     def role_checker(
         current_user: Annotated[User, Depends(get_current_user)],
     ) -> User:

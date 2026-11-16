@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 from app.auth.dependencies import get_current_user, get_user_role_str, require_roles
 from app.core.db import get_db
 from app.models.user import User, UserRole
-from app.schemas.court import CourtCreate, CourtDetailResponse, CourtResponse, CourtUpdate
+from app.schemas.court import (
+    CourtCreate,
+    CourtDetailResponse,
+    CourtResponse,
+    CourtUpdate,
+)
 from app.services.court_service import CourtService
 
 router = APIRouter(prefix="/api/v1/courts", tags=["Courts"])
@@ -38,11 +43,11 @@ def get_all_courts(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
     venue_id: Annotated[
-        Optional[UUID],
+        UUID | None,
         Query(description="Filter courts by venue UUID"),
     ] = None,
     sport_type: Annotated[
-        Optional[str],
+        str | None,
         Query(description="Filter courts by sport type (case-insensitive)"),
     ] = None,
     active_only: Annotated[
@@ -103,4 +108,3 @@ def deactivate_court(
     current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN, "ADMIN"))],
 ):
     CourtService.deactivate_court(db, court_id)
-    return None

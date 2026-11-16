@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
+
 
 class reservations(BaseModel):
     id:UUID
@@ -11,7 +11,7 @@ class reservations(BaseModel):
     start_at:datetime
     end_at:datetime
     status:str
-    expires_at:Optional[datetime]
+    expires_at:datetime | None
     created_at:datetime
 
     model_config = ConfigDict(from_attributes=True)

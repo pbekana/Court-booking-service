@@ -1,43 +1,36 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
 
 from sqlalchemy import DateTime, Numeric, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    pass
+from app.core.db import Base
 
 
 class Payment(Base):
-    __tablename__ = "payments"  # Replace with your exact table name if different
+    __tablename__ = "payments"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    booking_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    booking_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
-    hold_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    hold_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
-    provider: Mapped[str] = mapped_column(
-        String(50), nullable=False
-    )
-    provider_transaction_id: Mapped[Optional[str]] = mapped_column(
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    provider_transaction_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )
     payment_reference: Mapped[str] = mapped_column(
         String(255), nullable=False
     )
-    amount: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False
-    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     currency: Mapped[str] = mapped_column(
         String(3), nullable=False, server_default=text("'ETB'")
     )

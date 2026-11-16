@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -39,8 +38,8 @@ class CourtService:
     @staticmethod
     def get_courts(
         db: Session,
-        venue_id: Optional[UUID] = None,
-        sport_type: Optional[str] = None,
+        venue_id: UUID | None = None,
+        sport_type: str | None = None,
         is_active_only: bool = True,
     ) -> list[Court]:
         return CourtRepository.get_all(

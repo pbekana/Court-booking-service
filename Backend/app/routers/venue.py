@@ -90,4 +90,3 @@ def deactivate_venue(
     current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN, "ADMIN"))],
 ):
     VenueService.deactivate_venue(db, venue_id)
-    return None

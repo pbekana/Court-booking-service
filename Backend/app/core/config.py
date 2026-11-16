@@ -9,3 +9,4 @@ load_dotenv(ENV_FILE)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 PORT = int(os.getenv("PORT", "8000"))
+HOLD_DURATION_MINUTES = int(os.getenv("HOLD_DURATION_MINUTES", "10"))

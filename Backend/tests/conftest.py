@@ -5,7 +5,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 import app.models  # Ensures all models are registered
 from app.core.db import get_db
@@ -108,3 +108,24 @@ def staff_headers(staff_user: User) -> dict[str, str]:
 def member_headers(member_user: User) -> dict[str, str]:
     token = create_access_token({"sub": str(member_user.id), "role": "MEMBER"})
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def other_member_user(db_session: Session) -> User:
+    user = User(
+        full_name="Other Member Test User",
+        email=f"other_member_{uuid.uuid4().hex[:8]}@example.com",
+        password_hash=hash_password("other-member-password-123"),
+        role="MEMBER",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
+@pytest.fixture
+def other_member_headers(other_member_user: User) -> dict[str, str]:
+    token = create_access_token({"sub": str(other_member_user.id), "role": "MEMBER"})
+    return {"Authorization": f"Bearer {token}"}
+

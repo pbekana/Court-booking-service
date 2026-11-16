@@ -1,5 +1,4 @@
 from datetime import datetime, time
-from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12,14 +11,14 @@ def _validate_iana_timezone(tz: str) -> str:
         raise ValueError("Timezone cannot be empty")
     try:
         ZoneInfo(cleaned)
-    except (ZoneInfoNotFoundError, ValueError, Exception):
+    except (ZoneInfoNotFoundError, ValueError):
         raise ValueError(f"'{cleaned}' is not a valid IANA timezone")
     return cleaned
 
 
 class VenueBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="Venue name")
-    address: Optional[str] = Field(None, max_length=255, description="Physical address of the venue")
+    address: str | None = Field(None, max_length=255, description="Physical address of the venue")
     timezone: str = Field(
         default="Africa/Addis_Ababa",
         max_length=100,
@@ -43,9 +42,12 @@ class VenueBase(BaseModel):
 
     @model_validator(mode="after")
     def validate_operating_hours(self) -> "VenueBase":
-        if self.opening_time is not None and self.closing_time is not None:
-            if self.opening_time >= self.closing_time:
-                raise ValueError("Opening time must be earlier than closing time")
+        if (
+            self.opening_time is not None
+            and self.closing_time is not None
+            and self.opening_time >= self.closing_time
+        ):
+            raise ValueError("Opening time must be earlier than closing time")
         return self
 
 
@@ -54,16 +56,16 @@ class VenueCreate(VenueBase):
 
 
 class VenueUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    address: Optional[str] = Field(None, max_length=255)
-    timezone: Optional[str] = Field(None, max_length=100)
-    opening_time: Optional[time] = None
-    closing_time: Optional[time] = None
-    is_active: Optional[bool] = None
+    name: str | None = Field(None, min_length=1, max_length=100)
+    address: str | None = Field(None, max_length=255)
+    timezone: str | None = Field(None, max_length=100)
+    opening_time: time | None = None
+    closing_time: time | None = None
+    is_active: bool | None = None
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_name(cls, v: str | None) -> str | None:
         if v is not None:
             cleaned = v.strip()
             if not cleaned:
@@ -73,23 +75,26 @@ class VenueUpdate(BaseModel):
 
     @field_validator("timezone")
     @classmethod
-    def validate_timezone(cls, v: Optional[str]) -> Optional[str]:
+    def validate_timezone(cls, v: str | None) -> str | None:
         if v is not None:
             return _validate_iana_timezone(v)
         return v
 
     @model_validator(mode="after")
     def validate_hours(self) -> "VenueUpdate":
-        if self.opening_time is not None and self.closing_time is not None:
-            if self.opening_time >= self.closing_time:
-                raise ValueError("Opening time must be earlier than closing time")
+        if (
+            self.opening_time is not None
+            and self.closing_time is not None
+            and self.opening_time >= self.closing_time
+        ):
+            raise ValueError("Opening time must be earlier than closing time")
         return self
 
 
 class VenueResponse(BaseModel):
     id: UUID
     name: str
-    address: Optional[str] = None
+    address: str | None = None
     timezone: str
     opening_time: time
     closing_time: time

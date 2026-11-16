@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -33,14 +32,14 @@ class CourtCreate(CourtBase):
 
 
 class CourtUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    sport_type: Optional[str] = Field(None, min_length=1, max_length=50)
-    venue_id: Optional[UUID] = Field(None, description="Venue UUID to move court to")
-    is_active: Optional[bool] = None
+    name: str | None = Field(None, min_length=1, max_length=100)
+    sport_type: str | None = Field(None, min_length=1, max_length=50)
+    venue_id: UUID | None = Field(None, description="Venue UUID to move court to")
+    is_active: bool | None = None
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_name(cls, v: str | None) -> str | None:
         if v is not None:
             cleaned = v.strip()
             if not cleaned:
@@ -50,7 +49,7 @@ class CourtUpdate(BaseModel):
 
     @field_validator("sport_type")
     @classmethod
-    def validate_sport_type(cls, v: Optional[str]) -> Optional[str]:
+    def validate_sport_type(cls, v: str | None) -> str | None:
         if v is not None:
             cleaned = v.strip()
             if not cleaned:
@@ -71,7 +70,7 @@ class CourtResponse(BaseModel):
 
 
 class CourtDetailResponse(CourtResponse):
-    venue: Optional[VenueResponse] = None
+    venue: VenueResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

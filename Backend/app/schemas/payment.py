@@ -1,6 +1,5 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -8,10 +7,10 @@ from pydantic import BaseModel, ConfigDict
 
 class payment(BaseModel):
     id:UUID
-    booking_id:Optional[UUID]
-    hold_id:Optional[UUID]
+    booking_id:UUID | None
+    hold_id:UUID | None
     provider:str
-    provider_transaction_id:Optional[str]
+    provider_transaction_id:str | None
     payment_reference:str
     amount:Decimal
     currency:str

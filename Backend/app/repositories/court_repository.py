@@ -1,13 +1,17 @@
+import logging
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.court import Court
 from app.models.reservations import Reservation
 from app.schemas.court import CourtCreate
+
+logger = logging.getLogger(__name__)
 
 
 class CourtRepository:
@@ -26,7 +30,7 @@ class CourtRepository:
 
     @staticmethod
     def get_by_venue_and_name(
-        db: Session, venue_id: UUID, name: str, exclude_id: Optional[UUID] = None
+        db: Session, venue_id: UUID, name: str, exclude_id: UUID | None = None
     ) -> Court | None:
         stmt = select(Court).where(
             Court.venue_id == venue_id,
@@ -39,8 +43,8 @@ class CourtRepository:
     @staticmethod
     def get_all(
         db: Session,
-        venue_id: Optional[UUID] = None,
-        sport_type: Optional[str] = None,
+        venue_id: UUID | None = None,
+        sport_type: str | None = None,
         is_active_only: bool = True,
     ) -> list[Court]:
         stmt = select(Court)
@@ -98,6 +102,24 @@ class CourtRepository:
             return True
 
         try:
+            hold_check = db.execute(
+                text(
+                    """
+                    SELECT 1 FROM holds
+                    WHERE court_id = :court_id
+                      AND end_time > :now
+                      AND status IN ('ACTIVE', 'HELD')
+                    LIMIT 1
+                    """
+                ),
+                {"court_id": court_id, "now": now},
+            ).first()
+            if hold_check is not None:
+                return True
+        except SQLAlchemyError as exc:
+            logger.debug("Failed hold check: %s", exc)
+
+        try:
             booking_check = db.execute(
                 text(
                     """
@@ -112,7 +134,7 @@ class CourtRepository:
             ).first()
             if booking_check is not None:
                 return True
-        except Exception:
-            pass
+        except SQLAlchemyError as exc:
+            logger.debug("Failed booking check: %s", exc)
 
         return False

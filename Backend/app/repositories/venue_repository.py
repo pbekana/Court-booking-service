@@ -1,14 +1,18 @@
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.court import Court
 from app.models.reservations import Reservation
 from app.models.venue import Venue
 from app.schemas.venue import VenueCreate
+
+logger = logging.getLogger(__name__)
 
 
 class VenueRepository:
@@ -89,8 +93,7 @@ class VenueRepository:
             ).first()
             if booking_check is not None:
                 return True
-        except Exception:
-            # Table bookings might not have data or may not be queried in SQLite unit tests
-            pass
+        except SQLAlchemyError as exc:
+            logger.debug("Failed booking check: %s", exc)
 
         return False

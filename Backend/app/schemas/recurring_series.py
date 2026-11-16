@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+
 class recurring_series(BaseModel):
     id:UUID
     user_id:UUID
