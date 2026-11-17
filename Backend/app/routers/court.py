@@ -8,14 +8,18 @@ from app.auth.dependencies import get_current_user, get_user_role_str, require_r
 from app.core.db import get_db
 from app.models.user import User, UserRole
 from app.schemas.court import (
+    CourtAvailabilityRequest,
+    CourtAvailabilityResponse,
     CourtCreate,
     CourtDetailResponse,
     CourtResponse,
     CourtUpdate,
 )
+from app.services.court_availability_service import CourtAvailabilityService
 from app.services.court_service import CourtService
 
 router = APIRouter(prefix="/api/v1/courts", tags=["Courts"])
+availability_router = APIRouter(tags=["Courts"])
 
 
 @router.post(
@@ -108,3 +112,26 @@ def deactivate_court(
     current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN, "ADMIN"))],
 ):
     CourtService.deactivate_court(db, court_id)
+
+
+@availability_router.get(
+    "/{court_id}/availability",
+    response_model=CourtAvailabilityResponse,
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+    summary="Check court availability",
+    description="Check whether a court is available for a requested date and time interval, including applicable pricing breakdown.",
+)
+def check_court_availability(
+    court_id: UUID,
+    query_params: Annotated[CourtAvailabilityRequest, Query()],
+    db: Annotated[Session, Depends(get_db)],
+) -> CourtAvailabilityResponse:
+    return CourtAvailabilityService.check_court_availability(
+        db=db,
+        court_id=court_id,
+        request=query_params,
+    )
+
+
+router.include_router(availability_router)

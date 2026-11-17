@@ -191,6 +191,7 @@ class HoldService:
             hold.status = "EXPIRED"
             if hold.reservation is not None:
                 hold.reservation.status = "EXPIRED"
+                hold.reservation.expires_at = None
             db.commit()
             db.refresh(hold)
 
@@ -241,6 +242,7 @@ class HoldService:
             hold.status = "EXPIRED"
             if hold.reservation is not None:
                 hold.reservation.status = "EXPIRED"
+                hold.reservation.expires_at = None
             db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -275,6 +277,7 @@ class HoldService:
             locked_hold.status = "EXPIRED"
             if locked_hold.reservation is not None:
                 locked_hold.reservation.status = "EXPIRED"
+                locked_hold.reservation.expires_at = None
             db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -354,6 +357,7 @@ class HoldService:
             hold.status = "EXPIRED"
             if hold.reservation is not None:
                 hold.reservation.status = "EXPIRED"
+                hold.reservation.expires_at = None
             db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -71,6 +72,54 @@ class CourtResponse(BaseModel):
 
 class CourtDetailResponse(CourtResponse):
     venue: VenueResponse | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AvailabilityInterval(BaseModel):
+    start_at: datetime
+    end_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PricingSegment(BaseModel):
+    pricing_type: str
+    start_at: datetime
+    end_at: datetime
+    hourly_rate: Decimal
+    subtotal: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PricingBreakdown(BaseModel):
+    currency: str
+    total_price: Decimal
+    segments: list[PricingSegment]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CourtAvailabilityRequest(BaseModel):
+    start_at: datetime
+    end_at: datetime
+
+    @field_validator("start_at", "end_at")
+    @classmethod
+    def validate_timezone(cls, v: datetime) -> datetime:
+        if v.tzinfo is None or v.utcoffset() is None:
+            raise ValueError("Timestamps must include timezone information")
+        return v
+
+
+class CourtAvailabilityResponse(BaseModel):
+    court_id: UUID
+    venue_id: UUID | None = None
+    available: bool
+    requested_interval: AvailabilityInterval | None = None
+    pricing: PricingBreakdown | None = None
+    message: str
 
     model_config = ConfigDict(from_attributes=True)
 

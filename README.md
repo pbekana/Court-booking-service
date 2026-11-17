@@ -304,6 +304,95 @@ All court endpoints are prefixed with `/api/v1/courts`.
 
 ---
 
+## 📅 Court Availability Management
+
+Check whether a court is available for a requested date and time interval, including peak/off-peak pricing calculations, operating hours verification, hold expiration synchronization, and conflict detection.
+
+### Check Court Availability
+- **Endpoints**:
+  - `GET /courts/{court_id}/availability`
+  - `GET /api/v1/courts/{court_id}/availability`
+- **Authorization**: Public / Member
+- **Interval Convention**: `[start_at, end_at)` (half-open, adjacent bookings are allowed).
+
+#### Query Parameters
+| Parameter | Type | Required | Description | Example |
+|---|---|:---:|---|---|
+| `start_at` | string (ISO 8601 with timezone) | Yes | Requested reservation start timestamp | `2026-11-20T09:00:00+03:00` |
+| `end_at` | string (ISO 8601 with timezone) | Yes | Requested reservation end timestamp | `2026-11-20T10:00:00+03:00` |
+
+#### Example Request
+```http
+GET /courts/f5c7d421-0d1c-5fa9-cc7e-7cc0ce491b22/availability?start_at=2026-11-20T09:00:00%2B03:00&end_at=2026-11-20T10:00:00%2B03:00 HTTP/1.1
+Host: localhost:8000
+```
+
+#### Example Successful Response (`200 OK` - Available)
+```json
+{
+  "court_id": "f5c7d421-0d1c-5fa9-cc7e-7cc0ce491b22",
+  "venue_id": "e4b6c310-9c0b-4ef8-bb6d-6bb9bd380a11",
+  "available": true,
+  "requested_interval": {
+    "start_at": "2026-11-20T09:00:00+03:00",
+    "end_at": "2026-11-20T10:00:00+03:00"
+  },
+  "pricing": {
+    "currency": "ETB",
+    "total_price": 500.00,
+    "segments": [
+      {
+        "pricing_type": "OFF_PEAK",
+        "start_at": "2026-11-20T09:00:00+03:00",
+        "end_at": "2026-11-20T10:00:00+03:00",
+        "hourly_rate": 500.00,
+        "subtotal": 500.00
+      }
+    ]
+  },
+  "message": "Court is available for the requested time."
+}
+```
+
+#### Example Unavailable Responses (`200 OK` - Unavailable)
+When the court is already reserved:
+```json
+{
+  "court_id": "f5c7d421-0d1c-5fa9-cc7e-7cc0ce491b22",
+  "available": false,
+  "message": "Court is already reserved for the requested time."
+}
+```
+When the requested time is outside venue operating hours:
+```json
+{
+  "court_id": "f5c7d421-0d1c-5fa9-cc7e-7cc0ce491b22",
+  "available": false,
+  "message": "Requested time falls outside venue operating hours."
+}
+```
+When the court or venue is inactive:
+```json
+{
+  "court_id": "f5c7d421-0d1c-5fa9-cc7e-7cc0ce491b22",
+  "available": false,
+  "message": "Court is inactive."
+}
+```
+
+#### Error Responses
+- **`400 Bad Request`**: Invalid date/time range:
+  - `End time must be later than start time` (when `end_at <= start_at`).
+  - `Reservation start time must be in the future` (when `start_at <= now()`).
+- **`404 Not Found`**:
+  - `Court not found` (when `court_id` does not exist).
+- **`422 Unprocessable Content`**: Invalid query parameters or unsupported booking interval:
+  - `Missing timezone information` (when timestamps lack timezone offset).
+  - `No valid pricing rule found for the requested court and time interval` (when pricing rules are missing or expired).
+  - `Venue operating schedule is unsupported` (when overnight operating schedule `opening_time >= closing_time` is configured).
+
+---
+
 ## ⚠️ HTTP Status Code Mapping
 
 | Status Code | Meaning | Example Scenario |
@@ -347,6 +436,18 @@ cd Backend
 ```bash
 cd Backend
 .venv/bin/pytest tests/unit/test_court.py -v
+```
+
+### Run Court Availability Tests Only
+```bash
+cd Backend
+.venv/bin/pytest tests/unit/test_availability.py -v
+```
+
+### Run Concurrency Tests Only
+```bash
+cd Backend
+.venv/bin/pytest tests/concurrency/ -v
 ```
 
 ---

@@ -7,7 +7,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-import app.models  # Ensures all models are registered
+from app import models  # Ensures all models are registered
+
+_ = models.Court
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app

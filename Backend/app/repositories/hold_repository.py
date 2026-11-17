@@ -114,14 +114,15 @@ class HoldRepository:
                 Reservation.status == "HELD",
                 Reservation.expires_at <= now,
             )
-            .values(status="EXPIRED")
+            .values(status="EXPIRED", expires_at=None)
         )
         if court_id is not None:
             res_stmt = res_stmt.where(Reservation.court_id == court_id)
-        db.execute(res_stmt)
+        res_result = db.execute(res_stmt)
 
-        rowcount = getattr(result, "rowcount", 0)
-        return int(rowcount) if rowcount is not None else 0
+        hold_count = getattr(result, "rowcount", 0) or 0
+        res_count = getattr(res_result, "rowcount", 0) or 0
+        return max(int(hold_count), int(res_count))
 
     @staticmethod
     def create(
