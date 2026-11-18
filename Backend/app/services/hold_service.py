@@ -15,8 +15,11 @@ from app.models.reservations import Reservation
 from app.models.user import User
 from app.repositories.court_repository import CourtRepository
 from app.repositories.hold_repository import HoldRepository
+from app.repositories.pricing_repository import PricingRepository
 from app.repositories.venue_repository import VenueRepository
 from app.schemas.hold import HoldCreate
+from app.services.booking_limit_service import BookingLimitService
+from app.services.pricing_service import PricingService
 
 
 class HoldService:
@@ -89,6 +92,13 @@ class HoldService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="End time must be later than start time",
             )
+
+        # Concurrency protection & member booking limit enforcement
+        BookingLimitService.enforce_booking_limit(
+            db=db,
+            user_id=user_id,
+            additional_count=1,
+        )
 
         # Concurrency protection: lock court row during availability evaluation & creation
         db.execute(
@@ -249,7 +259,8 @@ class HoldService:
                 detail="Cannot confirm an expired hold",
             )
 
-        # Row-level locking for atomic confirmation
+        # Row-level locking for member & court for atomic confirmation
+        BookingLimitService.acquire_member_lock(db, current_user.id)
         db.execute(
             select(Court.id).where(Court.id == hold.court_id).with_for_update()
         ).first()
@@ -284,6 +295,14 @@ class HoldService:
                 detail="Cannot confirm an expired hold",
             )
 
+        # Enforce member booking limit (excluding this hold's reservation)
+        BookingLimitService.enforce_booking_limit(
+            db=db,
+            user_id=current_user.id,
+            additional_count=1,
+            exclude_reservation_id=locked_hold.reservation_id,
+        )
+
         # Verify court time slot is still available
         if HoldRepository.has_conflicting_booking(
             db, locked_hold.court_id, locked_hold.start_time, locked_hold.end_time
@@ -292,6 +311,22 @@ class HoldService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Court time slot is no longer available",
             )
+
+        # Calculate pricing snapshot
+        total_price = Decimal("0.00")
+        currency = "ETB"
+        if PricingRepository.court_has_any_rules(db, locked_hold.court_id):
+            court = CourtRepository.get_by_id_with_venue(db, locked_hold.court_id)
+            venue = court.venue if court else None
+            pricing = PricingService.calculate_pricing(
+                db=db,
+                court_id=locked_hold.court_id,
+                start_at=locked_hold.start_time,
+                end_at=locked_hold.end_time,
+                venue=venue,
+            )
+            total_price = pricing.total_price
+            currency = pricing.currency
 
         try:
             locked_hold.status = "CONFIRMED"
@@ -306,8 +341,8 @@ class HoldService:
                 court_id=locked_hold.court_id,
                 start_at=locked_hold.start_time,
                 end_at=locked_hold.end_time,
-                total_price=Decimal("0.00"),
-                currency="ETB",
+                total_price=total_price,
+                currency=currency,
                 status="CONFIRMED",
             )
             db.add(booking)

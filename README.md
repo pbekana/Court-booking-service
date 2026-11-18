@@ -458,3 +458,236 @@ When the FastAPI server is running:
 - **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 - **OpenAPI JSON**: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
+
+
+---
+
+# 🏷 Peak & Off-Peak Pricing Management (Module 1)
+
+The backend provides a complete configurable pricing management engine allowing administrators to define court prices based on the day of the week, time of day, and effective calendar dates.
+
+## Pricing Features & Capabilities
+
+- **Peak vs. Off-Peak Classification:** Classify court hours into `PEAK` or `OFF_PEAK`.
+- **Per-Court Custom Schedules:** Different courts can maintain completely independent pricing tiers.
+- **Day-of-Week Specificity:** Rules can target specific days (`0=Monday` to `6=Sunday`) or apply to all days (`null`). Day-specific rules override general rules.
+- **Overnight & Midnight-Crossing Schedules:** Pricing rules and booking requests that span across midnight (e.g., `22:00` to `06:00` or spanning from Sunday evening into Monday morning) are automatically split and mapped to their corresponding schedules.
+- **Venue Timezone Context:** All scheduling and boundary calculations are evaluated against the venue's configured IANA timezone (default `Africa/Addis_Ababa`).
+- **Precision Decimal Arithmetic:** All monetary rates and totals are computed using Python's `Decimal` with two-decimal-place rounding (`0.01`), eliminating floating-point errors.
+- **Immutable Price Snapshots:** Upon confirmation, the exact total price and currency are snapshotted onto the `bookings` record (`bookings.total_price`, `bookings.currency`). Future modifications or deactivations of pricing rules will never alter historical booking prices.
+- **Audit Preservation:** Rule deletions perform soft-deactivation (`is_active = False`) to preserve complete audit history.
+
+## Pricing Calculation Engine Workflow
+
+1. Retrieve all candidate active rules covering the local calendar dates of the requested interval.
+2. Identify boundary transition points:
+   - Requested start and end times in local venue time.
+   - Every midnight (`00:00:00`) between start and end dates.
+   - Rule start and end time boundaries falling within the booking window.
+3. For each continuous interval segment:
+   - Sample the midpoint datetime, determine the local calendar date and day of week.
+   - Match candidate rules.
+   - Disallow intervals with zero covering rules (HTTP `422 Unprocessable Content`).
+   - Disallow intervals with ambiguous conflicting rules (HTTP `422 Unprocessable Content`).
+   - Calculate segment duration in fractional hours and subtotal: `(hourly_rate * hours).quantize(Decimal("0.01"))`.
+4. Merge contiguous adjacent segments sharing identical pricing types and hourly rates.
+5. Aggregate segment subtotals into `total_price` and return a detailed `PricingBreakdown`.
+
+---
+
+# 🛡 Member Booking Limit Enforcement (Module 2)
+
+To maintain fair facility access, each club member is restricted to a maximum of **THREE (3) active future bookings** at any given time.
+
+## Booking Count Rules
+
+### What Counts:
+1. **Confirmed Future Bookings:** Confirmed bookings whose `end_at` timestamp is in the future.
+2. **Active Temporary Holds:** Unexpired temporary holds (`status="HELD"`) whose `expires_at` timestamp is in the future.
+
+### What Does NOT Count:
+- **Expired Holds:** Holds whose expiration timestamp has elapsed. Stale holds are transitioned to `EXPIRED` before limit evaluation.
+- **Cancelled Bookings:** Any booking or hold marked `CANCELLED`.
+- **Completed Past Bookings:** Confirmed bookings whose `end_at` is in the past.
+- **Failed Booking Attempts:** Any rolled-back or uncompleted transactions.
+
+The central `reservations` table is the single source of truth for all active occupancy and lifecycle tracking.
+
+## Concurrency Protection & Locking Strategy
+
+To prevent race conditions where a member sends simultaneous requests to bypass the limit:
+1. **Per-Member Transaction Lock:** A member-specific lock is acquired immediately before checking active reservations:
+   - Row-level lock: `SELECT id FROM users WHERE id = :user_id FOR UPDATE`
+   - Transaction-scoped PostgreSQL advisory lock: `SELECT pg_advisory_xact_lock(:lock_id)`
+2. **Atomic Verification & Creation:**
+   - Outdated member holds are expired.
+   - Active reservations are counted.
+   - If count reaches or exceeds 3, HTTP `409 Conflict` is returned immediately.
+   - Court row is locked and checked for court-level double bookings.
+   - Reservation and hold records are created within the same atomic transaction.
+   - Commit releases both member and court locks.
+3. **Double-Count Prevention on Confirmation:** When confirming a hold, the hold's own reservation is excluded from the pre-check so it is not double-counted.
+
+---
+
+# 📡 API Reference & Example Payloads
+
+## 1. Pricing Management Endpoints
+
+### Create Pricing Rule (Admin Only)
+- **Method / Endpoint:** `POST /pricing-rules` or `POST /api/v1/pricing-rules`
+- **Request Body:**
+```json
+{
+  "court_id": "8c6b45a0-6f78-43d9-9524-7667bf91d09e",
+  "pricing_type": "PEAK",
+  "start_time": "12:00:00",
+  "end_time": "18:00:00",
+  "day_of_week": 0,
+  "hourly_rate": "600.00",
+  "currency": "ETB",
+  "effective_from": "2026-01-01",
+  "effective_until": "2026-12-31"
+}
+```
+- **Response (`201 Created`):**
+```json
+{
+  "id": "e44d5671-5079-4592-802c-7b0bfe9873d1",
+  "court_id": "8c6b45a0-6f78-43d9-9524-7667bf91d09e",
+  "pricing_type": "PEAK",
+  "start_time": "12:00:00",
+  "end_time": "18:00:00",
+  "day_of_week": 0,
+  "hourly_rate": "600.00",
+  "currency": "ETB",
+  "effective_from": "2026-01-01",
+  "effective_until": "2026-12-31",
+  "is_active": true,
+  "created_at": "2026-11-18T20:00:00Z"
+}
+```
+
+### Preview Booking Pricing
+- **Method / Endpoint:** `POST /pricing/preview` or `POST /api/v1/pricing/preview`
+- **Request Body:**
+```json
+{
+  "court_id": "8c6b45a0-6f78-43d9-9524-7667bf91d09e",
+  "start_at": "2026-06-01T07:00:00Z",
+  "end_at": "2026-06-01T11:00:00Z"
+}
+```
+- **Response (`200 OK`):**
+```json
+{
+  "currency": "ETB",
+  "total_price": "1800.00",
+  "segments": [
+    {
+      "pricing_type": "OFF_PEAK",
+      "start_at": "2026-06-01T07:00:00Z",
+      "end_at": "2026-06-01T09:00:00Z",
+      "hourly_rate": "300.00",
+      "subtotal": "600.00"
+    },
+    {
+      "pricing_type": "PEAK",
+      "start_at": "2026-06-01T09:00:00Z",
+      "end_at": "2026-06-01T11:00:00Z",
+      "hourly_rate": "600.00",
+      "subtotal": "1200.00"
+    }
+  ]
+}
+```
+
+### Retrieve Pricing Rules
+- `GET /pricing-rules?court_id={id}&active_only=true`
+- `GET /pricing-rules/{id}`
+- `GET /courts/{court_id}/pricing-rules`
+
+### Update Pricing Rule (Admin Only)
+- **Method / Endpoint:** `PUT /pricing-rules/{id}`
+- **Request Body:**
+```json
+{
+  "hourly_rate": "750.00",
+  "pricing_type": "PEAK"
+}
+```
+
+### Delete/Deactivate Pricing Rule (Admin Only)
+- **Method / Endpoint:** `DELETE /pricing-rules/{id}`
+- **Response (`200 OK`):**
+```json
+{
+  "message": "Pricing rule deleted successfully"
+}
+```
+
+---
+
+## 2. Member Booking Limit Endpoints
+
+### Get Member Booking Limit Status
+- **Method / Endpoint:** `GET /members/me/booking-limit` or `GET /api/v1/members/me/booking-limit`
+- **Headers:** `Authorization: Bearer <token>`
+- **Response (`200 OK`):**
+```json
+{
+  "success": true,
+  "data": {
+    "booking_limit": 3,
+    "active_bookings": 2,
+    "remaining_bookings": 1,
+    "active_reservations": [
+      {
+        "id": "2b9da137-7097-4b67-93c6-e91845187768",
+        "court_id": "8c6b45a0-6f78-43d9-9524-7667bf91d09e",
+        "start_at": "2026-11-20T10:00:00Z",
+        "end_at": "2026-11-20T11:00:00Z",
+        "status": "CONFIRMED",
+        "expires_at": null
+      },
+      {
+        "id": "e98e2170-07bf-44e2-89dc-5f0ab22be269",
+        "court_id": "8c6b45a0-6f78-43d9-9524-7667bf91d09e",
+        "start_at": "2026-11-21T14:00:00Z",
+        "end_at": "2026-11-21T15:00:00Z",
+        "status": "HELD",
+        "expires_at": "2026-11-18T20:45:00Z"
+      }
+    ]
+  }
+}
+```
+
+### Limit Exceeded Response (`409 Conflict`)
+When a member attempts to create a hold or booking while having 3 active reservations:
+```json
+{
+  "success": false,
+  "message": "You have reached the maximum limit of 3 active future bookings.",
+  "data": {
+    "booking_limit": 3,
+    "active_bookings": 3,
+    "remaining_bookings": 0
+  }
+}
+```
+
+### Create Recurring Series (Member Limit Enforced)
+- **Method / Endpoint:** `POST /recurring-series` or `POST /api/v1/recurring-series`
+- **Request Body:**
+```json
+{
+  "court_id": "8c6b45a0-6f78-43d9-9524-7667bf91d09e",
+  "day_of_week": 2,
+  "start_time": "14:00:00",
+  "end_time": "15:00:00",
+  "recurrence_start_date": "2026-12-01",
+  "recurrence_end_date": "2026-12-15"
+}
+```
+If the requested occurrences plus existing active reservations exceed 3, the transaction rejects with `409 Conflict` leaving no orphaned records.
