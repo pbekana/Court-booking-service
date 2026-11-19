@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -11,10 +12,15 @@ from app.core.config import HOLD_DURATION_MINUTES
 from app.models.booking import Booking
 from app.models.court import Court
 from app.models.hold import Hold
+from app.models.payment import Payment, PaymentStatus
 from app.models.reservations import Reservation
 from app.models.user import User
+from app.providers.base import BasePaymentProvider
+from app.providers.mock_payment_provider import get_payment_provider
 from app.repositories.court_repository import CourtRepository
 from app.repositories.hold_repository import HoldRepository
+from app.repositories.idempotency_repository import IdempotencyRepository
+from app.repositories.payment_repository import PaymentRepository
 from app.repositories.pricing_repository import PricingRepository
 from app.repositories.venue_repository import VenueRepository
 from app.schemas.hold import HoldCreate
@@ -212,7 +218,26 @@ class HoldService:
         db: Session,
         hold_id: UUID,
         current_user: User,
+        idempotency_key_header: str | None = None,
+        provider: BasePaymentProvider | None = None,
     ) -> Booking:
+        effective_key = idempotency_key_header
+        expected_hash = IdempotencyRepository.compute_hash(f"confirm_hold:{hold_id}")
+
+        # Idempotency check via idempotency_records
+        if effective_key:
+            record = IdempotencyRepository.get(db, current_user.id, effective_key)
+            if record is not None:
+                if record.request_hash != expected_hash:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Idempotency key already used with different parameters",
+                    )
+                if record.response_reference is not None:
+                    existing_booking = db.get(Booking, record.response_reference)
+                    if existing_booking is not None:
+                        return existing_booking
+
         hold = HoldRepository.get_by_id(db, hold_id)
         if hold is None:
             raise HTTPException(
@@ -328,6 +353,113 @@ class HoldService:
             total_price = pricing.total_price
             currency = pricing.currency
 
+        # Payment processing
+        payment_provider = provider or get_payment_provider()
+        existing_payment = PaymentRepository.get_by_hold_id(db, locked_hold.id)
+
+        payment: Payment
+        if existing_payment is not None and existing_payment.status == PaymentStatus.SUCCESS.value:
+            # Payment already succeeded in previous attempt; proceed with reconciliation
+            payment = existing_payment
+        elif (
+            existing_payment is not None
+            and existing_payment.status in [PaymentStatus.PENDING.value, PaymentStatus.PROCESSING.value]
+            and existing_payment.provider_transaction_id is not None
+        ):
+            # Check provider for asynchronous or existing transaction
+            verification = payment_provider.verify_payment(existing_payment.provider_transaction_id)
+            if verification.success and verification.status == PaymentStatus.SUCCESS.value:
+                existing_payment.status = PaymentStatus.SUCCESS.value
+                payment = existing_payment
+            elif verification.status in [PaymentStatus.PENDING.value, PaymentStatus.PROCESSING.value]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Payment is still processing",
+                )
+            else:
+                existing_payment.status = PaymentStatus.FAILED.value
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=verification.error_message or "Payment failed",
+                )
+        else:
+            # Initiate payment if total_price > 0
+            if total_price > Decimal("0.00"):
+                payment_ref = f"PAY-{uuid.uuid4().hex[:12].upper()}"
+                if existing_payment is None:
+                    payment = Payment(
+                        hold_id=locked_hold.id,
+                        booking_id=None,
+                        provider=payment_provider.provider_name,
+                        payment_reference=payment_ref,
+                        amount=total_price,
+                        currency=currency,
+                        status=PaymentStatus.PENDING.value,
+                    )
+                    PaymentRepository.create(db, payment)
+                else:
+                    payment = existing_payment
+                    payment.payment_reference = payment_ref
+                    payment.amount = total_price
+                    payment.currency = currency
+                    payment.status = PaymentStatus.PENDING.value
+                db.flush()
+
+                pay_idempotency_key = f"pay-{locked_hold.id}-{payment.id}"
+                initiate_result = payment_provider.initiate_payment(
+                    amount=total_price,
+                    currency=currency,
+                    payment_reference=payment.payment_reference,
+                    idempotency_key=pay_idempotency_key,
+                    metadata={"hold_id": str(locked_hold.id), "user_id": str(current_user.id)},
+                )
+                if initiate_result.provider_transaction_id:
+                    payment.provider_transaction_id = initiate_result.provider_transaction_id
+
+                if (
+                    initiate_result.success
+                    and initiate_result.status == PaymentStatus.SUCCESS.value
+                    and initiate_result.provider_transaction_id is not None
+                ):
+                    ver = payment_provider.verify_payment(initiate_result.provider_transaction_id)
+                    if not ver.success or ver.status != PaymentStatus.SUCCESS.value:
+                        payment.status = PaymentStatus.FAILED.value
+                        db.commit()
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Payment verification failed",
+                        )
+                    payment.status = PaymentStatus.SUCCESS.value
+                elif initiate_result.status in [PaymentStatus.PENDING.value, PaymentStatus.PROCESSING.value]:
+                    payment.status = initiate_result.status
+                    db.commit()
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=initiate_result.error_message or "Payment processing pending",
+                    )
+                else:
+                    payment.status = PaymentStatus.FAILED.value
+                    db.commit()
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=initiate_result.error_message or "Payment failed",
+                    )
+            else:
+                # Free booking
+                payment_ref = f"PAY-ZERO-{uuid.uuid4().hex[:12].upper()}"
+                payment = Payment(
+                    hold_id=locked_hold.id,
+                    booking_id=None,
+                    provider="FREE",
+                    payment_reference=payment_ref,
+                    amount=Decimal("0.00"),
+                    currency=currency,
+                    status=PaymentStatus.SUCCESS.value,
+                )
+                PaymentRepository.create(db, payment)
+                db.flush()
+
         try:
             locked_hold.status = "CONFIRMED"
             if locked_hold.reservation is not None:
@@ -346,6 +478,21 @@ class HoldService:
                 status="CONFIRMED",
             )
             db.add(booking)
+            db.flush()
+
+            payment.booking_id = booking.id
+            payment.hold_id = None
+            payment.status = PaymentStatus.SUCCESS.value
+
+            if effective_key:
+                IdempotencyRepository.create(
+                    db=db,
+                    user_id=current_user.id,
+                    idempotency_key=effective_key,
+                    request_hash=expected_hash,
+                    response_reference=booking.id,
+                )
+
             db.commit()
             db.refresh(booking)
             return booking

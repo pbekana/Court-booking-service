@@ -1,3 +1,3 @@
-from fastapi import APIRouter
+from app.routers.booking import router
 
-router = APIRouter(tags=["Bookings"])
+__all__ = ["router"]

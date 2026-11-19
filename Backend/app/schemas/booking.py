@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.payment import PaymentResponse
+
 
 class BookingResponse(BaseModel):
     id: UUID
@@ -18,6 +20,7 @@ class BookingResponse(BaseModel):
     status: str
     created_at: datetime
     cancelled_at: datetime | None = None
+    payment: PaymentResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

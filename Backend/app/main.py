@@ -2,10 +2,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.auth.router import router as auth_router
+from app.routers.booking import router as booking_router
 from app.routers.court import availability_router
 from app.routers.court import router as court_router
 from app.routers.hold import router as hold_router
 from app.routers.member import router as member_router
+from app.routers.payment import router as payment_router
 from app.routers.pricing import router as pricing_router
 from app.routers.recurring import router as recurring_router
 from app.routers.venue import router as venue_router
@@ -40,3 +42,7 @@ app.include_router(member_router, prefix="/members")
 app.include_router(member_router, prefix="/api/v1/members")
 app.include_router(recurring_router)
 app.include_router(recurring_router, prefix="/api/v1")
+app.include_router(payment_router, prefix="/payments")
+app.include_router(payment_router, prefix="/api/v1/payments")
+app.include_router(booking_router, prefix="/bookings")
+app.include_router(booking_router, prefix="/api/v1/bookings")

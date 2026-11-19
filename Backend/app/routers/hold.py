@@ -64,17 +64,22 @@ def get_hold(
     response_model=BookingResponse,
     status_code=status.HTTP_200_OK,
     summary="Confirm a temporary hold",
-    description="Convert an active hold into a confirmed booking atomically.",
+    description="Convert an active hold into a confirmed booking atomically with integrated payment processing.",
 )
 def confirm_hold(
     hold_id: UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", description="Optional request idempotency key"),
+    ] = None,
 ) -> BookingResponse:
     booking = HoldService.confirm_hold(
         db=db,
         hold_id=hold_id,
         current_user=current_user,
+        idempotency_key_header=idempotency_key,
     )
     return BookingResponse.model_validate(booking)
 
