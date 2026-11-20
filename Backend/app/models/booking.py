@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from app.models.court import Court
     from app.models.hold import Hold
     from app.models.payment import Payment
+    from app.models.refund import Refund
     from app.models.reservations import Reservation
     from app.models.user import User
 
@@ -115,7 +116,12 @@ class Booking(Base):
     user: Mapped["User"] = relationship("User")
     reservation: Mapped[Optional["Reservation"]] = relationship("Reservation")
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="booking")
+    refunds: Mapped[list["Refund"]] = relationship("Refund", back_populates="booking")
 
     @property
     def payment(self) -> Optional["Payment"]:
         return self.payments[0] if self.payments else None
+
+    @property
+    def refund(self) -> Optional["Refund"]:
+        return self.refunds[0] if self.refunds else None

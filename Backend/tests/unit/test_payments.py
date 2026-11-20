@@ -543,15 +543,25 @@ def test_duplicate_cancellation_does_not_cause_duplicate_refunds(
     confirm_resp = client.post(f"/holds/{hold_id}/confirm", headers=member_headers)
     booking_id = confirm_resp.json()["id"]
 
-    # Cancel once
-    resp1 = client.post(f"/bookings/{booking_id}/cancel", headers=member_headers)
+    idem_key = f"cancel-{uuid.uuid4()}"
+    headers_with_idem = {**member_headers, "Idempotency-Key": idem_key}
+
+    # Cancel once with idempotency key
+    resp1 = client.post(f"/bookings/{booking_id}/cancel", headers=headers_with_idem)
     assert resp1.status_code == 200
+    assert resp1.json()["booking_status"] == "CANCELLED"
 
-    # Cancel second time: should return existing cancelled booking idempotently
-    resp2 = client.post(f"/bookings/{booking_id}/cancel", headers=member_headers)
+    # Cancel second time with same idempotency key: returns existing result idempotently
+    resp2 = client.post(f"/bookings/{booking_id}/cancel", headers=headers_with_idem)
     assert resp2.status_code == 200
-    assert resp2.json()["status"] == "CANCELLED"
+    assert resp2.json()["booking_status"] == "CANCELLED"
 
+    # Non-idempotent repeat cancellation without idempotency key: rejected with 409 Conflict
+    resp3 = client.post(f"/bookings/{booking_id}/cancel", headers=member_headers)
+    assert resp3.status_code == 409
+    assert "already been cancelled" in resp3.json()["detail"].lower()
+
+    # Payment status must remain REFUNDED and no duplicate refund was created
     payment = db_session.scalar(select(Payment).where(Payment.booking_id == uuid.UUID(booking_id)))
     assert payment is not None
     assert payment.status == "REFUNDED"
@@ -572,13 +582,15 @@ def test_failed_refund_handled_correctly(
         provider.set_next_refund_outcome("FAILED", "Simulated refund gateway failure")
 
     cancel_resp = client.post(f"/bookings/{booking_id}/cancel", headers=member_headers)
-    assert cancel_resp.status_code == 400
-    assert "refund" in cancel_resp.json()["detail"].lower()
+    assert cancel_resp.status_code == 200
+    cancelled_data = cancel_resp.json()
+    assert cancelled_data["booking_status"] == "CANCELLED"
+    assert cancelled_data["refund"]["status"] == "FAILED"
 
-    # Booking remains CONFIRMED due to rollback
+    # Failed provider refund does NOT restore the booking
     booking = db_session.get(Booking, uuid.UUID(booking_id))
     assert booking is not None
-    assert booking.status == "CONFIRMED"
+    assert booking.status == "CANCELLED"
 
 
 def test_pending_refund_represented_correctly(

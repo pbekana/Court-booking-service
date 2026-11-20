@@ -24,6 +24,10 @@ class MockPaymentProvider(BasePaymentProvider):
 
         self.should_return_invalid_response: bool = False
         self._transactions: dict[str, dict[str, Any]] = {}
+        self._refund_idempotency_keys: dict[str, RefundResult] = {}
+        self._refund_attempts: dict[str, int] = {}
+        self.refund_calls_count: int = 0
+        self.simulate_duplicate_refund_error: bool = False
 
     @property
     def provider_name(self) -> str:
@@ -56,6 +60,10 @@ class MockPaymentProvider(BasePaymentProvider):
         self.next_refund_error = None
         self.should_return_invalid_response = False
         self._transactions.clear()
+        self._refund_idempotency_keys.clear()
+        self._refund_attempts.clear()
+        self.refund_calls_count = 0
+        self.simulate_duplicate_refund_error = False
 
     def initiate_payment(
         self,
@@ -172,6 +180,27 @@ class MockPaymentProvider(BasePaymentProvider):
         idempotency_key: str | None = None,
         reason: str | None = None,
     ) -> RefundResult:
+        self.refund_calls_count += 1
+
+        if idempotency_key is not None:
+            self._refund_attempts[idempotency_key] = (
+                self._refund_attempts.get(idempotency_key, 0) + 1
+            )
+            if idempotency_key in self._refund_idempotency_keys:
+                if self.simulate_duplicate_refund_error:
+                    return RefundResult(
+                        success=False,
+                        status="FAILED",
+                        refund_transaction_id=None,
+                        error_message="Duplicate refund request rejected by provider",
+                        raw_response={
+                            "error": "DUPLICATE_REQUEST",
+                            "idempotency_key": idempotency_key,
+                        },
+                    )
+                # Return cached refund result for idempotent retry without creating duplicate provider txn
+                return self._refund_idempotency_keys[idempotency_key]
+
         if self.should_return_invalid_response:
             return RefundResult(
                 success=False,
@@ -191,7 +220,7 @@ class MockPaymentProvider(BasePaymentProvider):
         if outcome == "REFUNDED":
             if provider_transaction_id in self._transactions:
                 self._transactions[provider_transaction_id]["status"] = "REFUNDED"
-            return RefundResult(
+            result = RefundResult(
                 success=True,
                 status="REFUNDED",
                 refund_transaction_id=refund_id,
@@ -203,10 +232,13 @@ class MockPaymentProvider(BasePaymentProvider):
                     "currency": currency,
                 },
             )
+            if idempotency_key is not None:
+                self._refund_idempotency_keys[idempotency_key] = result
+            return result
         elif outcome == "REFUND_PENDING":
             if provider_transaction_id in self._transactions:
                 self._transactions[provider_transaction_id]["status"] = "REFUND_PENDING"
-            return RefundResult(
+            result = RefundResult(
                 success=True,
                 status="REFUND_PENDING",
                 refund_transaction_id=refund_id,
@@ -215,6 +247,20 @@ class MockPaymentProvider(BasePaymentProvider):
                     "provider": "MOCK",
                     "refund_id": refund_id,
                     "status": "REFUND_PENDING",
+                },
+            )
+            if idempotency_key is not None:
+                self._refund_idempotency_keys[idempotency_key] = result
+            return result
+        elif outcome == "DUPLICATE":
+            return RefundResult(
+                success=False,
+                status="FAILED",
+                refund_transaction_id=None,
+                error_message=error_msg or "Duplicate refund request rejected by provider",
+                raw_response={
+                    "provider": "MOCK",
+                    "status": "DUPLICATE",
                 },
             )
         else:

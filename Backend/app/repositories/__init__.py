@@ -4,6 +4,7 @@ from app.repositories.hold_repository import HoldRepository
 from app.repositories.idempotency_repository import IdempotencyRepository
 from app.repositories.payment_repository import PaymentRepository
 from app.repositories.pricing_repository import PricingRepository
+from app.repositories.refund_repository import RefundRepository
 from app.repositories.venue_repository import VenueRepository
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "IdempotencyRepository",
     "PaymentRepository",
     "PricingRepository",
+    "RefundRepository",
     "VenueRepository",
 ]

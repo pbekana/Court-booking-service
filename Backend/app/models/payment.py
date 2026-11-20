@@ -23,6 +23,7 @@ from app.core.db import Base
 if TYPE_CHECKING:
     from app.models.booking import Booking
     from app.models.hold import Hold
+    from app.models.refund import Refund
 
 
 class PaymentStatus(str, enum.Enum):
@@ -108,4 +109,7 @@ class Payment(Base):
     )
     hold: Mapped[Optional["Hold"]] = relationship(
         "Hold", back_populates="payments"
+    )
+    refunds: Mapped[list["Refund"]] = relationship(
+        "Refund", back_populates="payment"
     )

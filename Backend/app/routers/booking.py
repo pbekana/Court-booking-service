@@ -1,13 +1,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.core.db import get_db
 from app.models.user import User, UserRole
 from app.schemas.booking import BookingResponse
+from app.schemas.refund import BookingCancellationResponse, BookingRefundResponse
 from app.services.booking_service import BookingService
 
 router = APIRouter(tags=["Bookings"])
@@ -15,7 +16,7 @@ router = APIRouter(tags=["Bookings"])
 
 @router.post(
     "/{booking_id}/cancel",
-    response_model=BookingResponse,
+    response_model=BookingCancellationResponse,
     status_code=status.HTTP_200_OK,
     summary="Cancel a confirmed booking",
     description="Cancel a booking. Eligible for full refund if cancelled at least 24 hours prior to booking start time.",
@@ -24,13 +25,55 @@ def cancel_booking(
     booking_id: UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> BookingResponse:
-    booking = BookingService.cancel_booking(
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", description="Optional request idempotency key"),
+    ] = None,
+) -> BookingCancellationResponse:
+    return BookingService.cancel_booking(
+        db=db,
+        booking_id=booking_id,
+        current_user=current_user,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.get(
+    "/{booking_id}/refund",
+    response_model=BookingRefundResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get refund information for a booking",
+    description="Retrieve refund status and details associated with a booking. Requester must be booking owner or staff/admin.",
+)
+def get_booking_refund(
+    booking_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> BookingRefundResponse:
+    return BookingService.get_refund(
         db=db,
         booking_id=booking_id,
         current_user=current_user,
     )
-    return BookingResponse.model_validate(booking)
+
+
+@router.post(
+    "/{booking_id}/refund/retry",
+    response_model=BookingRefundResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retry a failed or pending refund",
+    description="Retry refund processing with the payment provider for a cancelled booking. Requester must be booking owner or staff/admin.",
+)
+def retry_booking_refund(
+    booking_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> BookingRefundResponse:
+    return BookingService.retry_refund(
+        db=db,
+        booking_id=booking_id,
+        current_user=current_user,
+    )
 
 
 @router.get(
