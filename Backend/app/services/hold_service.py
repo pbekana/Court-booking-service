@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -10,9 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import HOLD_DURATION_MINUTES
 from app.models.booking import Booking
+from app.models.booking_ocurrences import BookingOccurrence
 from app.models.court import Court
 from app.models.hold import Hold
 from app.models.payment import Payment, PaymentStatus
+from app.models.recurring_series import RecurringSeries
 from app.models.reservations import Reservation
 from app.models.user import User
 from app.providers.base import BasePaymentProvider
@@ -303,7 +306,7 @@ class HoldService:
             if existing_booking is not None:
                 return existing_booking
 
-        if locked_hold.status != "ACTIVE":
+        if locked_hold.status not in ["ACTIVE", "HELD"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Hold is not active (current status: {locked_hold.status})",
@@ -483,6 +486,66 @@ class HoldService:
             payment.booking_id = booking.id
             payment.hold_id = None
             payment.status = PaymentStatus.SUCCESS.value
+
+            # Link recurring occurrence if this hold belongs to a recurring series
+            series_id: UUID | None = None
+            if locked_hold.idempotency_key and "recurring:" in locked_hold.idempotency_key:
+                try:
+                    parts = locked_hold.idempotency_key.split(":")
+                    rec_idx = parts.index("recurring")
+                    series_id = UUID(parts[rec_idx + 1])
+                except (ValueError, IndexError):
+                    pass
+
+            court = CourtRepository.get_by_id_with_venue(db, locked_hold.court_id)
+            venue = court.venue if court else None
+            try:
+                venue_tz = (
+                    ZoneInfo(venue.timezone)
+                    if venue and venue.timezone
+                    else ZoneInfo("Africa/Addis_Ababa")
+                )
+            except (ZoneInfoNotFoundError, KeyError, ValueError):
+                venue_tz = ZoneInfo("Africa/Addis_Ababa")
+
+            start_local = locked_hold.start_time.astimezone(venue_tz)
+            end_local = locked_hold.end_time.astimezone(venue_tz)
+            occ_date = start_local.date()
+
+            if series_id is None:
+                matching_series = db.scalars(
+                    select(RecurringSeries).where(
+                        RecurringSeries.user_id == locked_hold.user_id,
+                        RecurringSeries.court_id == locked_hold.court_id,
+                        RecurringSeries.status == "ACTIVE",
+                        RecurringSeries.day_of_week == start_local.weekday(),
+                        RecurringSeries.start_time == start_local.time(),
+                        RecurringSeries.end_time == end_local.time(),
+                        RecurringSeries.recurrence_start_date <= occ_date,
+                        RecurringSeries.recurrence_end_date >= occ_date,
+                    )
+                ).first()
+                if matching_series is not None:
+                    series_id = matching_series.id
+
+            if series_id is not None:
+                existing_occ = db.scalars(
+                    select(BookingOccurrence).where(
+                        BookingOccurrence.recurring_series_id == series_id,
+                        BookingOccurrence.occurrence_date == occ_date,
+                    )
+                ).first()
+                if existing_occ is None:
+                    occurrence = BookingOccurrence(
+                        recurring_series_id=series_id,
+                        booking_id=booking.id,
+                        occurrence_date=occ_date,
+                        status="CONFIRMED",
+                    )
+                    db.add(occurrence)
+                else:
+                    existing_occ.booking_id = booking.id
+                    existing_occ.status = "CONFIRMED"
 
             if effective_key:
                 IdempotencyRepository.create(
