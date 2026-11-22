@@ -16,7 +16,12 @@ class HoldRepository:
 
     @staticmethod
     def get_by_id_for_update(db: Session, hold_id: UUID) -> Hold | None:
-        stmt = select(Hold).where(Hold.id == hold_id).with_for_update()
+        stmt = (
+            select(Hold)
+            .where(Hold.id == hold_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         return db.scalar(stmt)
 
     @staticmethod
