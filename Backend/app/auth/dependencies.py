@@ -21,7 +21,9 @@ def get_user_role_str(user: User) -> str:
         return "ADMIN"
     elif "STAFF" in role_upper:
         return "STAFF"
-    return "MEMBER"
+    elif "MEMBER" in role_upper or "USER" in role_upper:
+        return "MEMBER"
+    return role_upper
 
 
 def get_current_user(
@@ -63,7 +65,7 @@ def get_current_user(
         except (ValueError, TypeError):
             user = db.query(User).filter(User.id == user_id).first()
 
-    if user is None:
+    if user is None or not user.is_active:
         raise credentials_exception
 
     return user
@@ -74,14 +76,20 @@ def require_role(required_role: UserRole | str) -> Callable[..., User]:
         current_user: Annotated[User, Depends(get_current_user)],
     ) -> User:
         user_role_str = get_user_role_str(current_user)
-        target = required_role.value if hasattr(required_role, "value") else str(required_role)
+        target = (
+            required_role.value
+            if hasattr(required_role, "value")
+            else str(required_role)
+        )
         target_upper = str(target).upper()
         if "ADMIN" in target_upper:
             expected = "ADMIN"
         elif "STAFF" in target_upper:
             expected = "STAFF"
-        else:
+        elif "MEMBER" in target_upper or "USER" in target_upper:
             expected = "MEMBER"
+        else:
+            expected = target_upper
 
         if user_role_str != expected:
             raise HTTPException(
@@ -106,8 +114,10 @@ def require_roles(*allowed_roles: UserRole | str) -> Callable[..., User]:
                 expected_set.add("ADMIN")
             elif "STAFF" in target_upper:
                 expected_set.add("STAFF")
-            else:
+            elif "MEMBER" in target_upper or "USER" in target_upper:
                 expected_set.add("MEMBER")
+            else:
+                expected_set.add(target_upper)
 
         if user_role_str not in expected_set:
             raise HTTPException(

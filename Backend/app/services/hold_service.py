@@ -43,9 +43,7 @@ class HoldService:
 
         # Check idempotency first if key is present
         if effective_key:
-            existing = HoldRepository.get_by_idempotency_key(
-                db, user_id, effective_key
-            )
+            existing = HoldRepository.get_by_idempotency_key(db, user_id, effective_key)
             if existing is not None:
                 if (
                     existing.court_id == hold_in.court_id
@@ -111,9 +109,7 @@ class HoldService:
 
         # Concurrency protection: lock court row during availability evaluation & creation
         db.execute(
-            select(Court.id)
-            .where(Court.id == hold_in.court_id)
-            .with_for_update()
+            select(Court.id).where(Court.id == hold_in.court_id).with_for_update()
         ).first()
 
         # Handle expired holds prior to checking availability
@@ -206,7 +202,12 @@ class HoldService:
 
         # Auto-expire if expired
         now = datetime.now(UTC)
-        if hold.status in ["ACTIVE", "HELD"] and hold.expires_at <= now:
+        hold_expires = (
+            hold.expires_at
+            if hold.expires_at.tzinfo
+            else hold.expires_at.replace(tzinfo=UTC)
+        )
+        if hold.status in ["ACTIVE", "HELD"] and hold_expires <= now:
             hold.status = "EXPIRED"
             if hold.reservation is not None:
                 hold.reservation.status = "EXPIRED"
@@ -257,9 +258,7 @@ class HoldService:
 
         # Idempotency check: if already confirmed, return existing booking
         if hold.status == "CONFIRMED":
-            booking = db.scalar(
-                select(Booking).where(Booking.hold_id == hold.id)
-            )
+            booking = db.scalar(select(Booking).where(Booking.hold_id == hold.id))
             if booking is not None:
                 return booking
 
@@ -276,7 +275,12 @@ class HoldService:
             )
 
         now = datetime.now(UTC)
-        if hold.expires_at <= now:
+        hold_expires = (
+            hold.expires_at
+            if hold.expires_at.tzinfo
+            else hold.expires_at.replace(tzinfo=UTC)
+        )
+        if hold_expires <= now:
             hold.status = "EXPIRED"
             if hold.reservation is not None:
                 hold.reservation.status = "EXPIRED"
@@ -312,7 +316,12 @@ class HoldService:
                 detail=f"Hold is not active (current status: {locked_hold.status})",
             )
 
-        if locked_hold.expires_at <= datetime.now(UTC):
+        locked_expires = (
+            locked_hold.expires_at
+            if locked_hold.expires_at.tzinfo
+            else locked_hold.expires_at.replace(tzinfo=UTC)
+        )
+        if locked_expires <= datetime.now(UTC):
             locked_hold.status = "EXPIRED"
             if locked_hold.reservation is not None:
                 locked_hold.reservation.status = "EXPIRED"
@@ -361,20 +370,32 @@ class HoldService:
         existing_payment = PaymentRepository.get_by_hold_id(db, locked_hold.id)
 
         payment: Payment
-        if existing_payment is not None and existing_payment.status == PaymentStatus.SUCCESS.value:
+        if (
+            existing_payment is not None
+            and existing_payment.status == PaymentStatus.SUCCESS.value
+        ):
             # Payment already succeeded in previous attempt; proceed with reconciliation
             payment = existing_payment
         elif (
             existing_payment is not None
-            and existing_payment.status in [PaymentStatus.PENDING.value, PaymentStatus.PROCESSING.value]
+            and existing_payment.status
+            in [PaymentStatus.PENDING.value, PaymentStatus.PROCESSING.value]
             and existing_payment.provider_transaction_id is not None
         ):
             # Check provider for asynchronous or existing transaction
-            verification = payment_provider.verify_payment(existing_payment.provider_transaction_id)
-            if verification.success and verification.status == PaymentStatus.SUCCESS.value:
+            verification = payment_provider.verify_payment(
+                existing_payment.provider_transaction_id
+            )
+            if (
+                verification.success
+                and verification.status == PaymentStatus.SUCCESS.value
+            ):
                 existing_payment.status = PaymentStatus.SUCCESS.value
                 payment = existing_payment
-            elif verification.status in [PaymentStatus.PENDING.value, PaymentStatus.PROCESSING.value]:
+            elif verification.status in [
+                PaymentStatus.PENDING.value,
+                PaymentStatus.PROCESSING.value,
+            ]:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Payment is still processing",
@@ -415,17 +436,24 @@ class HoldService:
                     currency=currency,
                     payment_reference=payment.payment_reference,
                     idempotency_key=pay_idempotency_key,
-                    metadata={"hold_id": str(locked_hold.id), "user_id": str(current_user.id)},
+                    metadata={
+                        "hold_id": str(locked_hold.id),
+                        "user_id": str(current_user.id),
+                    },
                 )
                 if initiate_result.provider_transaction_id:
-                    payment.provider_transaction_id = initiate_result.provider_transaction_id
+                    payment.provider_transaction_id = (
+                        initiate_result.provider_transaction_id
+                    )
 
                 if (
                     initiate_result.success
                     and initiate_result.status == PaymentStatus.SUCCESS.value
                     and initiate_result.provider_transaction_id is not None
                 ):
-                    ver = payment_provider.verify_payment(initiate_result.provider_transaction_id)
+                    ver = payment_provider.verify_payment(
+                        initiate_result.provider_transaction_id
+                    )
                     if not ver.success or ver.status != PaymentStatus.SUCCESS.value:
                         payment.status = PaymentStatus.FAILED.value
                         db.commit()
@@ -434,12 +462,16 @@ class HoldService:
                             detail="Payment verification failed",
                         )
                     payment.status = PaymentStatus.SUCCESS.value
-                elif initiate_result.status in [PaymentStatus.PENDING.value, PaymentStatus.PROCESSING.value]:
+                elif initiate_result.status in [
+                    PaymentStatus.PENDING.value,
+                    PaymentStatus.PROCESSING.value,
+                ]:
                     payment.status = initiate_result.status
                     db.commit()
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=initiate_result.error_message or "Payment processing pending",
+                        detail=initiate_result.error_message
+                        or "Payment processing pending",
                     )
                 else:
                     payment.status = PaymentStatus.FAILED.value
@@ -489,7 +521,10 @@ class HoldService:
 
             # Link recurring occurrence if this hold belongs to a recurring series
             series_id: UUID | None = None
-            if locked_hold.idempotency_key and "recurring:" in locked_hold.idempotency_key:
+            if (
+                locked_hold.idempotency_key
+                and "recurring:" in locked_hold.idempotency_key
+            ):
                 try:
                     parts = locked_hold.idempotency_key.split(":")
                     rec_idx = parts.index("recurring")
@@ -598,7 +633,12 @@ class HoldService:
                 detail=f"Only active holds can be cancelled (current status: {hold.status})",
             )
 
-        if hold.expires_at <= now:
+        hold_expires = (
+            hold.expires_at
+            if hold.expires_at.tzinfo
+            else hold.expires_at.replace(tzinfo=UTC)
+        )
+        if hold_expires <= now:
             hold.status = "EXPIRED"
             if hold.reservation is not None:
                 hold.reservation.status = "EXPIRED"

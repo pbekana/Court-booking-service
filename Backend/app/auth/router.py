@@ -66,7 +66,9 @@ def register_user(
         access_token = create_access_token(
             {
                 "sub": str(new_user.id),
-                "role": new_user.role.value if hasattr(new_user.role, "value") else str(new_user.role),
+                "role": new_user.role.value
+                if hasattr(new_user.role, "value")
+                else str(new_user.role),
             }
         )
         db.commit()
@@ -100,6 +102,12 @@ def login_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is inactive",
         )
 
     access_token = create_access_token(
