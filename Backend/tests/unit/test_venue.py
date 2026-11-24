@@ -266,8 +266,9 @@ def test_prevent_unauthorized_venue_operations(
     # Member cannot create
     assert client.post("/api/v1/venues", headers=member_headers, json=venue_payload).status_code == 403
 
-    # Staff cannot create
-    assert client.post("/api/v1/venues", headers=staff_headers, json=venue_payload).status_code == 403
+    # Staff can create
+    staff_resp = client.post("/api/v1/venues", headers=staff_headers, json=venue_payload)
+    assert staff_resp.status_code == 201
 
     # Unauthenticated cannot create or read
     assert client.post("/api/v1/venues", json=venue_payload).status_code == 401

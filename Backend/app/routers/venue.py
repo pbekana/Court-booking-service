@@ -18,12 +18,15 @@ router = APIRouter(prefix="/api/v1/venues", tags=["Venues"])
     response_model=VenueResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new venue",
-    description="Administrator endpoint to create a physical sports venue.",
+    description="Staff and administrator endpoint to create a physical sports venue.",
 )
 def create_venue(
     venue_in: VenueCreate,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(require_roles(UserRole.ADMIN, "ADMIN"))],
+    current_user: Annotated[
+        User,
+        Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
+    ],
 ):
     return VenueService.create_venue(db, venue_in)
 

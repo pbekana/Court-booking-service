@@ -354,7 +354,7 @@ class TestAuthenticationRequirementsOnEndpoints:
     def test_staff_role_endpoint_access_boundaries(
         self, client: TestClient, users: dict[str, User]
     ) -> None:
-        """STAFF can access staff endpoints, but cannot access administrator-only functionality."""
+        """STAFF can access staff endpoints and create venues."""
         staff_headers = make_headers(users["staff"])
 
         # Staff accesses staff profile -> 200 OK
@@ -362,8 +362,8 @@ class TestAuthenticationRequirementsOnEndpoints:
         assert resp_staff.status_code == 200
         assert resp_staff.json()["role"] == "STAFF"
 
-        # Staff attempts admin-only venue creation -> 403 Forbidden
-        resp_admin = client.post(
+        # Staff creates venue -> 201 Created
+        resp_venue = client.post(
             "/api/v1/venues",
             json={
                 "name": "Staff Venue",
@@ -374,7 +374,8 @@ class TestAuthenticationRequirementsOnEndpoints:
             },
             headers=staff_headers,
         )
-        assert resp_admin.status_code == 403
+        assert resp_venue.status_code == 201
+        assert resp_venue.json()["name"] == "Staff Venue"
 
     def test_admin_role_endpoint_access(
         self, client: TestClient, users: dict[str, User]
