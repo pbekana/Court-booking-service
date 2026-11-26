@@ -1,3 +1,4 @@
+import datetime
 import os
 import uuid
 from collections.abc import Iterator
@@ -13,7 +14,9 @@ _ = models.Court
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password
 from app.main import app
+from app.models.court import Court
 from app.models.user import User
+from app.models.venue import Venue
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
@@ -130,4 +133,52 @@ def other_member_user(db_session: Session) -> User:
 def other_member_headers(other_member_user: User) -> dict[str, str]:
     token = create_access_token({"sub": str(other_member_user.id), "role": "MEMBER"})
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def test_venue(db_session: Session) -> Venue:
+    venue = Venue(
+        name=f"Fixture Venue {uuid.uuid4().hex[:8]}",
+        address="123 Test Street",
+        timezone="Africa/Addis_Ababa",
+        opening_time=datetime.time(6, 0),
+        closing_time=datetime.time(22, 0),
+        is_active=True,
+    )
+    db_session.add(venue)
+    db_session.commit()
+    return venue
+
+
+@pytest.fixture
+def test_court(db_session: Session, test_venue: Venue) -> Court:
+    from decimal import Decimal
+
+    from app.models.pricing_rules import PricingRule
+
+    court = Court(
+        venue_id=test_venue.id,
+        name=f"Fixture Court {uuid.uuid4().hex[:8]}",
+        sport_type="Tennis",
+        is_active=True,
+    )
+    db_session.add(court)
+    db_session.flush()
+
+    pricing_rule = PricingRule(
+        court_id=court.id,
+        pricing_type="OFF_PEAK",
+        day_of_week=None,
+        start_time=datetime.time(0, 0),
+        end_time=datetime.time(23, 59, 59),
+        hourly_rate=Decimal("100.00"),
+        currency="ETB",
+        effective_from=datetime.date(2025, 1, 1),
+        effective_until=datetime.date(2035, 12, 31),
+        is_active=True,
+    )
+    db_session.add(pricing_rule)
+    db_session.commit()
+    return court
+
 

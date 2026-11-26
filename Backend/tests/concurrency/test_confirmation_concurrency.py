@@ -181,10 +181,10 @@ def test_concurrent_confirmation_initiates_payment_once(
             bookings = session.scalars(
                 select(Booking).where(Booking.hold_id == hold_id)
             ).all()
-            booking_ids = [booking.id for booking in bookings]
-            if booking_ids:
+            clean_booking_ids = [booking.id for booking in bookings]
+            if clean_booking_ids:
                 session.query(Payment).filter(
-                    Payment.booking_id.in_(booking_ids)
+                    Payment.booking_id.in_(clean_booking_ids)
                 ).delete(synchronize_session=False)
             session.query(Payment).filter(Payment.hold_id == hold_id).delete(
                 synchronize_session=False

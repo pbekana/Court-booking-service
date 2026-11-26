@@ -16,7 +16,7 @@ from app.models.user import User, UserRole
 def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("JWT_SECRET", "test-secret-key-for-authentication")
     engine = create_engine(
-        "postgresql://postgres:123456@localhost:5432/court_booking_service_db",
+        "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )

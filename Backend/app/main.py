@@ -10,6 +10,7 @@ from app.routers.member import router as member_router
 from app.routers.payment import router as payment_router
 from app.routers.pricing import router as pricing_router
 from app.routers.recurring import router as recurring_router
+from app.routers.staff_reports import router as staff_reports_router
 from app.routers.venue import router as venue_router
 from app.services.booking_limit_service import BookingLimitExceededException
 
@@ -46,3 +47,5 @@ app.include_router(payment_router, prefix="/payments")
 app.include_router(payment_router, prefix="/api/v1/payments")
 app.include_router(booking_router, prefix="/bookings")
 app.include_router(booking_router, prefix="/api/v1/bookings")
+app.include_router(staff_reports_router, prefix="/staff")
+app.include_router(staff_reports_router, prefix="/api/v1/staff")
