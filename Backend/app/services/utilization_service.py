@@ -1,5 +1,5 @@
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -13,6 +13,93 @@ from app.models.hold import Hold
 from app.models.venue import Venue
 from app.schemas.staff_report import CourtUtilization, WeeklyUtilizationReport
 
+TWO_DECIMAL_PLACES = Decimal("0.01")
+SECONDS_PER_HOUR = Decimal(3600)
+HUNDRED = Decimal(100)
+
+
+def _parse_venue_timezone(venue: Venue) -> ZoneInfo:
+    """Validate and return the venue's configured IANA timezone."""
+    tz_name = venue.timezone.strip() if isinstance(venue.timezone, str) else ""
+    if not tz_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Invalid timezone configuration for venue '{venue.name}'",
+        )
+    try:
+        return ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, KeyError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Invalid timezone '{tz_name}' configured for venue '{venue.name}'",
+        ) from exc
+
+
+def _to_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _seconds_to_hours(seconds: Decimal) -> Decimal:
+    """Convert elapsed seconds to hours rounded to 2 decimal places."""
+    return (seconds / SECONDS_PER_HOUR).quantize(
+        TWO_DECIMAL_PLACES, rounding=ROUND_HALF_UP
+    )
+
+
+def _calculate_utilization_percentage(
+    booked_seconds: Decimal, operating_seconds: Decimal
+) -> Decimal:
+    """Compute (Confirmed Booked Hours / Total Operating Hours) * 100 safely."""
+    if operating_seconds <= Decimal(0):
+        return Decimal("0.00")
+    return ((booked_seconds * HUNDRED) / operating_seconds).quantize(
+        TWO_DECIMAL_PLACES, rounding=ROUND_HALF_UP
+    )
+
+
+def _build_operating_windows(
+    start_date: date,
+    end_date: date,
+    opening_time: time,
+    closing_time: time,
+    venue_tz: ZoneInfo,
+    period_start_utc: datetime,
+    period_end_utc: datetime,
+) -> tuple[list[tuple[datetime, datetime]], Decimal]:
+    """Build daily UTC operating intervals for [start_date, end_date] in venue_tz.
+
+    Iterates each calendar day in the venue's local timezone so DST transitions
+    are reflected accurately in elapsed UTC seconds. Assumes uniform daily
+    opening/closing times per the Venue schema.
+    """
+    if opening_time >= closing_time:
+        return [], Decimal(0)
+
+    windows: list[tuple[datetime, datetime]] = []
+    total_operating_seconds = Decimal(0)
+    current_day = start_date
+    while current_day <= end_date:
+        day_open_utc = datetime.combine(
+            current_day, opening_time, tzinfo=venue_tz
+        ).astimezone(UTC)
+        day_close_utc = datetime.combine(
+            current_day, closing_time, tzinfo=venue_tz
+        ).astimezone(UTC)
+
+        win_start = max(day_open_utc, period_start_utc)
+        win_end = min(day_close_utc, period_end_utc)
+        if win_end > win_start:
+            windows.append((win_start, win_end))
+            total_operating_seconds += Decimal(
+                str((win_end - win_start).total_seconds())
+            )
+        current_day += timedelta(days=1)
+
+    return windows, total_operating_seconds
+
 
 class UtilizationService:
     @staticmethod
@@ -25,9 +112,64 @@ class UtilizationService:
     ) -> WeeklyUtilizationReport:
         now_utc = datetime.now(UTC)
 
-        # 1. Resolve date range
+        # 1. Validate venue/court filters and determine reference timezone
+        filter_venue: Venue | None = None
+        if venue_id is not None:
+            filter_venue = db.get(Venue, venue_id)
+            if filter_venue is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Venue not found",
+                )
+            _parse_venue_timezone(filter_venue)
+
+        target_courts: list[Court]
+        if court_id is not None:
+            court = db.execute(
+                select(Court).options(joinedload(Court.venue)).where(Court.id == court_id)
+            ).scalar_one_or_none()
+            if court is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Court not found",
+                )
+            if venue_id is not None and court.venue_id != venue_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Court does not belong to specified venue",
+                )
+            if court.venue is not None:
+                _parse_venue_timezone(court.venue)
+                if filter_venue is None:
+                    filter_venue = court.venue
+
+            # Consistent with active-only court/venue rules: exclude inactive entities
+            if court.is_active and court.venue is not None and court.venue.is_active:
+                target_courts = [court]
+            else:
+                target_courts = []
+        else:
+            stmt = (
+                select(Court)
+                .join(Venue, Court.venue_id == Venue.id)
+                .options(joinedload(Court.venue))
+                .where(Court.is_active.is_(True), Venue.is_active.is_(True))
+                .order_by(Court.name)
+            )
+            if venue_id is not None:
+                stmt = stmt.where(Court.venue_id == venue_id)
+            target_courts = list(db.scalars(stmt).all())
+
+        # 2. Resolve date range (using venue timezone when scoped to a single venue)
+        ref_tz: ZoneInfo | None = (
+            _parse_venue_timezone(filter_venue) if filter_venue is not None else None
+        )
         if start_date is None and end_date is None:
-            today = now_utc.date()
+            today = (
+                now_utc.astimezone(ref_tz).date()
+                if ref_tz is not None
+                else now_utc.date()
+            )
             start_date = today - timedelta(days=today.weekday())  # Current week Monday
             end_date = start_date + timedelta(days=6)  # Current week Sunday
         elif start_date is None and end_date is not None:
@@ -43,68 +185,40 @@ class UtilizationService:
                 detail="end_date cannot be earlier than start_date",
             )
 
-        num_days = (end_date - start_date).days + 1
-
-        # 2. Validate filters and query target courts
-        if venue_id is not None:
-            venue = db.get(Venue, venue_id)
-            if venue is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Venue not found",
-                )
-
-        if court_id is not None:
-            court = db.execute(
-                select(Court).options(joinedload(Court.venue)).where(Court.id == court_id)
-            ).scalar_one_or_none()
-            if court is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Court not found",
-                )
-            if venue_id is not None and court.venue_id != venue_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Court does not belong to specified venue",
-                )
-            target_courts = [court]
-        else:
-            stmt = select(Court).options(joinedload(Court.venue)).order_by(Court.name)
-            if venue_id is not None:
-                stmt = stmt.where(Court.venue_id == venue_id)
-            target_courts = list(db.scalars(stmt).all())
-
         court_reports: list[CourtUtilization] = []
-
+        total_op_seconds = Decimal(0)
+        total_bk_seconds = Decimal(0)
         total_op_hours = Decimal("0.00")
         total_bk_hours = Decimal("0.00")
 
-        # 3. Process each court
+        # 3. Process each active court
         for c in target_courts:
             v: Venue | None = c.venue
             if v is None:
                 continue
 
-            try:
-                venue_tz = ZoneInfo(v.timezone)
-            except (ZoneInfoNotFoundError, KeyError, ValueError):
-                venue_tz = ZoneInfo("Africa/Addis_Ababa")
+            venue_tz = _parse_venue_timezone(v)
 
-            # Local day boundaries converted to UTC
-            period_start_utc = datetime.combine(start_date, time.min, tzinfo=venue_tz).astimezone(UTC)
-            period_end_utc = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=venue_tz).astimezone(UTC)
+            # Local calendar day boundaries converted to UTC
+            period_start_utc = datetime.combine(
+                start_date, time.min, tzinfo=venue_tz
+            ).astimezone(UTC)
+            period_end_utc = datetime.combine(
+                end_date + timedelta(days=1), time.min, tzinfo=venue_tz
+            ).astimezone(UTC)
 
-            # Operating hours
-            if v.opening_time < v.closing_time:
-                daily_seconds = (
-                    datetime.combine(date.min, v.closing_time) - datetime.combine(date.min, v.opening_time)
-                ).total_seconds()
-                court_op_hours = Decimal(str(round((daily_seconds / 3600.0) * num_days, 2)))
-            else:
-                court_op_hours = Decimal("0.00")
+            operating_windows, court_op_seconds = _build_operating_windows(
+                start_date=start_date,
+                end_date=end_date,
+                opening_time=v.opening_time,
+                closing_time=v.closing_time,
+                venue_tz=venue_tz,
+                period_start_utc=period_start_utc,
+                period_end_utc=period_end_utc,
+            )
+            court_op_hours = _seconds_to_hours(court_op_seconds)
 
-            # Confirmed bookings within the period (excluding cancelled)
+            # Confirmed bookings within the period (cancelled excluded)
             bookings = db.scalars(
                 select(Booking).where(
                     Booking.court_id == c.id,
@@ -114,16 +228,33 @@ class UtilizationService:
                 )
             ).all()
 
-            court_booked_seconds = 0.0
+            court_booked_seconds = Decimal(0)
+            confirmed_booking_count = 0
+            seen_booking_ids: set[UUID] = set()
+
             for b in bookings:
-                overlap_start = max(b.start_at, period_start_utc)
-                overlap_end = min(b.end_at, period_end_utc)
-                if overlap_end > overlap_start:
-                    court_booked_seconds += (overlap_end - overlap_start).total_seconds()
+                if b.id in seen_booking_ids:
+                    continue
+                seen_booking_ids.add(b.id)
 
-            court_bk_hours = Decimal(str(round(court_booked_seconds / 3600.0, 2)))
+                b_start = _to_utc(b.start_at)
+                b_end = _to_utc(b.end_at)
+                booking_overlap_seconds = Decimal(0)
+                for win_start, win_end in operating_windows:
+                    overlap_start = max(b_start, win_start)
+                    overlap_end = min(b_end, win_end)
+                    if overlap_end > overlap_start:
+                        booking_overlap_seconds += Decimal(
+                            str((overlap_end - overlap_start).total_seconds())
+                        )
 
-            # Active temporary holds within the period (not expired)
+                if booking_overlap_seconds > Decimal(0):
+                    court_booked_seconds += booking_overlap_seconds
+                    confirmed_booking_count += 1
+
+            court_bk_hours = _seconds_to_hours(court_booked_seconds)
+
+            # Active temporary holds within the period (not expired, reported separately)
             active_holds = db.scalars(
                 select(Hold).where(
                     Hold.court_id == c.id,
@@ -134,23 +265,26 @@ class UtilizationService:
                 )
             ).all()
 
-            hold_seconds = 0.0
+            hold_seconds = Decimal(0)
+            seen_hold_ids: set[UUID] = set()
             for h in active_holds:
-                h_start = h.start_time if h.start_time.tzinfo else h.start_time.replace(tzinfo=UTC)
-                h_end = h.end_time if h.end_time.tzinfo else h.end_time.replace(tzinfo=UTC)
+                if h.id in seen_hold_ids:
+                    continue
+                seen_hold_ids.add(h.id)
+
+                h_start = _to_utc(h.start_time)
+                h_end = _to_utc(h.end_time)
                 overlap_start = max(h_start, period_start_utc)
                 overlap_end = min(h_end, period_end_utc)
                 if overlap_end > overlap_start:
-                    hold_seconds += (overlap_end - overlap_start).total_seconds()
+                    hold_seconds += Decimal(
+                        str((overlap_end - overlap_start).total_seconds())
+                    )
 
-            hold_hours = Decimal(str(round(hold_seconds / 3600.0, 2)))
-
-            # Utilization percentage
-            if court_op_hours > Decimal("0.00"):
-                util_pct = Decimal(str(round((float(court_bk_hours) / float(court_op_hours)) * 100.0, 2)))
-            else:
-                util_pct = Decimal("0.00")
-
+            hold_hours = _seconds_to_hours(hold_seconds)
+            util_pct = _calculate_utilization_percentage(
+                court_booked_seconds, court_op_seconds
+            )
             avail_hours = max(Decimal("0.00"), court_op_hours - court_bk_hours)
 
             court_reports.append(
@@ -164,22 +298,23 @@ class UtilizationService:
                     total_booked_hours=court_bk_hours,
                     total_available_hours=avail_hours,
                     utilization_percentage=util_pct,
-                    confirmed_bookings_count=len(bookings),
-                    number_of_confirmed_bookings=len(bookings),
-                    active_holds_count=len(active_holds),
+                    confirmed_bookings_count=confirmed_booking_count,
+                    number_of_confirmed_bookings=confirmed_booking_count,
+                    active_holds_count=len(seen_hold_ids),
                     active_hold_hours=hold_hours,
                 )
             )
 
+            total_op_seconds += court_op_seconds
+            total_bk_seconds += court_booked_seconds
             total_op_hours += court_op_hours
             total_bk_hours += court_bk_hours
 
         # 4. Overall metrics
         total_avail_hours = max(Decimal("0.00"), total_op_hours - total_bk_hours)
-        if total_op_hours > Decimal("0.00"):
-            overall_util_pct = Decimal(str(round((float(total_bk_hours) / float(total_op_hours)) * 100.0, 2)))
-        else:
-            overall_util_pct = Decimal("0.00")
+        overall_util_pct = _calculate_utilization_percentage(
+            total_bk_seconds, total_op_seconds
+        )
 
         return WeeklyUtilizationReport(
             start_date=start_date,
